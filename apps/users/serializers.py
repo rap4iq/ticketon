@@ -18,7 +18,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CustomUser
-        fields = ['id', 'username', 'email', 'password', 'password_confirm', 'role', 'form']
+        fields = ['id', 'username', 'email', 'password', 'password_confirm', 'role', 'phone']
 
         extra_kwargs = {
             'email': {'required': True},
@@ -48,3 +48,93 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             phone=validated_data.get('phone', '')
         )
         return user
+
+class UserLoginSerializer(serializers.Serializer):
+    """Сериализатор для входа пользователя"""
+    email = serializers.EmailField(required=True)
+    password = serializers.CharField(
+        required=True,
+        write_only=True,
+        style={'input_type': 'password'}
+    )
+
+    def validate(self, attrs):
+        """Проверка credentials"""
+        email = attrs.get('email', '').lower()
+        password = attrs.get('password', '')
+
+        if not email or not password:
+            raise serializers.ValidationError("Email and password are required")
+
+        # Найти пользователя по email
+        try:
+            user = CustomUser.objects.get(email=email)
+        except CustomUser.DoesNotExist:
+            raise serializers.ValidationError("Invalid credentials")
+
+        # Проверить пароль
+        if not user.check_password(password):
+            raise serializers.ValidationError("Invalid credentials")
+
+        if not user.is_active:
+            raise serializers.ValidationError("User account is disabled")
+
+        attrs['user'] = user
+        return attrs
+
+
+class UserSerializer(serializers.ModelSerializer):
+    """Сериализатор для отображения информации о пользователе"""
+    
+    class Meta:
+        model = CustomUser
+        fields = ['id', 'username', 'email', 'role', 'phone', 'email_verified', 'created_at']
+        read_only_fields = ['id', 'email_verified', 'created_at']
+
+
+class UserUpdateSerializer(serializers.ModelSerializer):
+    """Сериализатор для обновления профиля"""
+    
+    class Meta:
+        model = CustomUser
+        fields = ['username', 'phone']
+
+    def validate_username(self, value):
+        """Проверка уникальности username (кроме текущего пользователя)"""
+        user = self.context['request'].user
+        if CustomUser.objects.exclude(pk=user.pk).filter(username=value).exists():
+            raise serializers.ValidationError("This username is already taken")
+        return value
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    """Сериализатор для смены пароля"""
+    old_password = serializers.CharField(
+        required=True,
+        write_only=True,
+        style={'input_type': 'password'}
+    )
+    new_password = serializers.CharField(
+        required=True,
+        write_only=True,
+        validators=[validate_password],
+        style={'input_type': 'password'}
+    )
+    new_password_confirm = serializers.CharField(
+        required=True,
+        write_only=True,
+        style={'input_type': 'password'}
+    )
+
+    def validate(self, attrs):
+        """Проверка совпадения новых паролей"""
+        if attrs['new_password'] != attrs['new_password_confirm']:
+            raise serializers.ValidationError({"new_password": "New passwords don't match"})
+        return attrs
+
+    def validate_old_password(self, value):
+        """Проверка старого пароля"""
+        user = self.context['request'].user
+        if not user.check_password(value):
+            raise serializers.ValidationError("Old password is incorrect")
+        return value
